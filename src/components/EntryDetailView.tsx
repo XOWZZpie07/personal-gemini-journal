@@ -20,6 +20,7 @@ import {
 import { JournalEntry, ConversationTurn, ReflectionMode } from "../types";
 import { requestGeminiReflection } from "../lib/geminiApi";
 import { appendTurnToEntry, deleteJournalEntry, togglePinEntry } from "../lib/firebase";
+import { getEntryMoodInfo } from "../lib/moodUtils";
 
 interface EntryDetailViewProps {
   userId: string;
@@ -190,6 +191,14 @@ export const EntryDetailView: React.FC<EntryDetailViewProps> = ({
                   <span>{entry.mood}</span>
                 </>
               )}
+              {entry.moodAnalysis && (
+                <>
+                  <span>•</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium text-[10px] border border-emerald-200">
+                    AI Tone: {entry.moodAnalysis.primaryMood} ({Math.round(entry.moodAnalysis.confidence * 100)}%)
+                  </span>
+                </>
+              )}
               {entry.tags && entry.tags.length > 0 && (
                 <>
                   <span>•</span>
@@ -240,6 +249,57 @@ export const EntryDetailView: React.FC<EntryDetailViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Mood & Emotional Tone Banner */}
+      {(() => {
+        const moodInfo = getEntryMoodInfo(entry);
+        return (
+          <div
+            id="entry-mood-analysis-banner"
+            className="p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+            style={{
+              backgroundColor: moodInfo.meta.bg,
+              borderColor: moodInfo.meta.borderColor,
+            }}
+          >
+            <div className="flex items-start sm:items-center gap-3">
+              <span className="text-2xl shrink-0 p-1.5 bg-white/70 rounded-xl border border-white/50">
+                {moodInfo.meta.emoji}
+              </span>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold" style={{ color: moodInfo.meta.color }}>
+                    Emotional Tone: {moodInfo.meta.label}
+                  </span>
+                  {moodInfo.confidence && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/80 font-medium text-[#495057]">
+                      {Math.round(moodInfo.confidence * 100)}% Confidence
+                    </span>
+                  )}
+                  {moodInfo.isAiDetected && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/80 font-medium text-[#495057] flex items-center gap-1">
+                      <Sparkles className="w-2.5 h-2.5 text-purple-600" />
+                      Gemini Verified
+                    </span>
+                  )}
+                </div>
+                {moodInfo.explanation && (
+                  <p className="text-xs text-[#495057] italic">
+                    "{moodInfo.explanation}"
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {moodInfo.userReportedMood && (
+              <div className="shrink-0 self-start sm:self-center px-2.5 py-1 rounded-xl bg-white/80 border border-white/60 text-[11px] text-[#495057] flex items-center gap-1.5">
+                <UserIcon className="w-3.5 h-3.5 text-[#6C757D]" />
+                <span>Self-Reported: <strong>{moodInfo.userReportedMood}</strong></span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Conversation Turns Timeline */}
       <div id="conversation-timeline" className="space-y-4">

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { JournalEntry } from "../types";
 import { deleteJournalEntry, togglePinEntry } from "../lib/firebase";
+import { getEntryMoodInfo } from "../lib/moodUtils";
 
 interface EntryHistoryProps {
   userId: string;
@@ -54,7 +55,11 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
         entry.turns?.some((t) => t.text.toLowerCase().includes(searchQuery.toLowerCase()));
 
       const matchesTag = !selectedTag || entry.tags?.includes(selectedTag);
-      const matchesMood = !selectedMoodFilter || entry.mood === selectedMoodFilter;
+      const info = getEntryMoodInfo(entry);
+      const matchesMood =
+        !selectedMoodFilter ||
+        info.category === selectedMoodFilter ||
+        entry.mood === selectedMoodFilter;
 
       return matchesSearch && matchesTag && matchesMood;
     });
@@ -255,7 +260,22 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
                       <Calendar className="w-3 h-3 text-[#ADB5BD]" />
                       {formatDate(entry.createdAt)}
                     </span>
-                    {entry.mood && <span>{entry.mood}</span>}
+                    {(() => {
+                      const itemMood = getEntryMoodInfo(entry);
+                      return (
+                        <span
+                          className="px-1.5 py-0.2 rounded-md font-medium border text-[9px] flex items-center gap-1"
+                          style={{
+                            backgroundColor: itemMood.meta.bg,
+                            color: itemMood.meta.color,
+                            borderColor: itemMood.meta.borderColor,
+                          }}
+                        >
+                          <span>{itemMood.meta.emoji}</span>
+                          <span>{itemMood.meta.label}</span>
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex items-center gap-1.5">

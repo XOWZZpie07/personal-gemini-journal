@@ -1,13 +1,24 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { auth, checkRedirectAuth, subscribeToUserEntries } from "./lib/firebase";
-import { JournalEntry } from "./types";
+import {
+  auth,
+  checkRedirectAuth,
+  subscribeToUserEntries,
+  getUserProfile,
+  updateJournalEntryMoodAnalysis,
+} from "./lib/firebase";
+import { JournalEntry, PetPreferences } from "./types";
 import { Navbar } from "./components/Navbar";
 import { AuthLanding } from "./components/AuthLanding";
 import { JournalEditor } from "./components/JournalEditor";
 import { EntryHistory } from "./components/EntryHistory";
 import { EntryDetailView } from "./components/EntryDetailView";
+import { JournalBuddy } from "./components/JournalBuddy";
+import { MoodDashboard } from "./components/MoodDashboard";
+import { PersonalInsightsView } from "./components/PersonalInsightsView";
 import { ThreatModelModal } from "./components/ThreatModelModal";
+import { getEntryMoodInfo } from "./lib/moodUtils";
+import { analyzeJournalMood } from "./lib/geminiApi";
 import { WifiOff } from "lucide-react";
 
 export default function App() {
@@ -17,9 +28,13 @@ export default function App() {
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(true);
+  const [activeTab, setActiveTab] = useState<"journal" | "mood_dashboard" | "insights">("journal");
+  const [petPreferences, setPetPreferences] = useState<PetPreferences | undefined>(undefined);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  const backfilledIdsRef = useRef<Set<string>>(new Set());
 
   // Monitor online / offline state
   useEffect(() => {
@@ -34,19 +49,30 @@ export default function App() {
     };
   }, []);
 
-  // Monitor Firebase Auth state
+  // Monitor Firebase Auth state & fetch pet preferences
   useEffect(() => {
-    // Check if coming back from redirect login
     checkRedirectAuth().catch(console.error);
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       setAuthLoading(false);
+
+      if (user) {
+        try {
+          const profile = await getUserProfile(user.uid);
+          if (profile?.petPreferences) {
+            setPetPreferences(profile.petPreferences);
+          }
+        } catch (err) {
+          console.error("Failed to load user profile:", err);
+        }
+      } else {
+        setPetPreferences(undefined);
+      }
     });
 
     return () => unsubscribe();
   }, []);
-
 
   // Real-time Firestore subscription for authenticated user's isolated documents
   useEffect(() => {
@@ -62,6 +88,26 @@ export default function App() {
       (userEntries) => {
         setEntries(userEntries);
         setEntriesLoading(false);
+
+        // Safe, non-blocking check for entries lacking AI mood analysis
+        userEntries.forEach(async (entry) => {
+          if (
+            (!entry.moodAnalysis || !entry.moodAnalysis.primaryMood) &&
+            entry.initialContent &&
+            currentUser?.uid &&
+            !backfilledIdsRef.current.has(entry.id)
+          ) {
+            backfilledIdsRef.current.add(entry.id);
+            try {
+              const analysis = await analyzeJournalMood(entry.initialContent, entry.title);
+              if (analysis && analysis.primaryMood) {
+                await updateJournalEntryMoodAnalysis(currentUser.uid, entry.id, analysis);
+              }
+            } catch (e) {
+              console.warn("Backfill mood analysis skipped:", e);
+            }
+          }
+        });
       },
       (err) => {
         console.error("Firestore subscription error:", err);
@@ -75,15 +121,21 @@ export default function App() {
   // Selected entry object lookup
   const selectedEntry = entries.find((e) => e.id === selectedEntryId) || null;
 
+  // Derive most recent mood from latest entry for the animated companion
+  const latestEntry = entries[0];
+  const activeMood = latestEntry ? getEntryMoodInfo(latestEntry).category : undefined;
+
   const handleSelectEntry = (id: string) => {
     setSelectedEntryId(id);
     setIsCreatingNew(false);
+    setActiveTab("journal");
     setMobileSidebarOpen(false);
   };
 
   const handleStartNewEntry = () => {
     setSelectedEntryId(null);
     setIsCreatingNew(true);
+    setActiveTab("journal");
     setMobileSidebarOpen(false);
   };
 
@@ -94,6 +146,7 @@ export default function App() {
     });
     setSelectedEntryId(newEntry.id);
     setIsCreatingNew(false);
+    setActiveTab("journal");
   };
 
   if (authLoading) {
@@ -110,6 +163,8 @@ export default function App() {
       {/* Top Navigation */}
       <Navbar
         user={currentUser}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
         onNewEntry={handleStartNewEntry}
         onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
@@ -158,20 +213,41 @@ export default function App() {
 
           {/* Center Content Workspace */}
           <main id="main-content-area" className="flex-1 overflow-y-auto bg-[#F8F9FA] p-3 sm:p-6 lg:p-8">
-            {selectedEntry && !isCreatingNew ? (
-              <EntryDetailView
+            <div className="max-w-4xl mx-auto space-y-5">
+              {/* Animated Virtual Pet Companion Bar */}
+              <JournalBuddy
                 userId={currentUser.uid}
-                entry={selectedEntry}
-                onBack={handleStartNewEntry}
-                onDeleteSuccess={handleStartNewEntry}
+                initialPreferences={petPreferences}
+                currentMood={activeMood}
               />
-            ) : (
-              <JournalEditor
-                userId={currentUser.uid}
-                onEntryCreated={handleEntryCreated}
-                onCancel={entries.length > 0 && selectedEntryId ? () => setIsCreatingNew(false) : undefined}
-              />
-            )}
+
+              {/* View Switcher: Journal vs. Mood Trends vs. AI Insights */}
+              {activeTab === "mood_dashboard" ? (
+                <MoodDashboard
+                  entries={entries}
+                  onSelectEntry={handleSelectEntry}
+                />
+              ) : activeTab === "insights" ? (
+                <PersonalInsightsView
+                  userId={currentUser.uid}
+                  entries={entries}
+                  onSelectEntry={handleSelectEntry}
+                />
+              ) : selectedEntry && !isCreatingNew ? (
+                <EntryDetailView
+                  userId={currentUser.uid}
+                  entry={selectedEntry}
+                  onBack={handleStartNewEntry}
+                  onDeleteSuccess={handleStartNewEntry}
+                />
+              ) : (
+                <JournalEditor
+                  userId={currentUser.uid}
+                  onEntryCreated={handleEntryCreated}
+                  onCancel={entries.length > 0 && selectedEntryId ? () => setIsCreatingNew(false) : undefined}
+                />
+              )}
+            </div>
           </main>
         </div>
       )}

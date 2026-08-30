@@ -15,8 +15,8 @@ import {
   RotateCcw,
   Key,
 } from "lucide-react";
-import { ReflectionMode, JournalEntry, ConversationTurn } from "../types";
-import { requestGeminiReflection } from "../lib/geminiApi";
+import { ReflectionMode, JournalEntry, ConversationTurn, MoodAnalysisResult } from "../types";
+import { requestGeminiReflection, analyzeJournalMood } from "../lib/geminiApi";
 import { createJournalEntry } from "../lib/firebase";
 
 interface JournalEditorProps {
@@ -58,13 +58,17 @@ const MODES: { id: ReflectionMode; label: string; icon: React.ElementType; desc:
   },
 ];
 
-const MOODS = [
-  { emoji: "🌱", label: "Grounded" },
-  { emoji: "⚡", label: "Energized" },
-  { emoji: "🌊", label: "Reflective" },
-  { emoji: "🌧️", label: "Overwhelmed" },
-  { emoji: "💡", label: "Curious" },
-  { emoji: "✨", label: "Grateful" },
+import { MOOD_METADATA, normalizeMood } from "../lib/moodUtils";
+
+const MANUAL_MOOD_OPTIONS = [
+  { emoji: "😊", label: "Happy", category: "happy" },
+  { emoji: "🎉", label: "Excited", category: "excited" },
+  { emoji: "🌱", label: "Calm / Grounded", category: "calm" },
+  { emoji: "✨", label: "Grateful", category: "grateful" },
+  { emoji: "🌧️", label: "Sad", category: "sad" },
+  { emoji: "⚡", label: "Stressed / Overwhelmed", category: "stressed" },
+  { emoji: "😤", label: "Frustrated", category: "frustrated" },
+  { emoji: "😐", label: "Neutral", category: "neutral" },
 ];
 
 const PROMPT_STARTERS = [
@@ -82,7 +86,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [selectedMode, setSelectedMode] = useState<ReflectionMode>("reflect");
-  const [selectedMood, setSelectedMood] = useState("🌱 Grounded");
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>(["Reflection"]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -155,12 +159,15 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
           minute: "2-digit",
         })}`;
 
-      // 1. Send prompt to server-side Gemini fallback ladder
-      const geminiResponse = await requestGeminiReflection({
-        prompt: content,
-        mode: selectedMode,
-        history: [],
-      });
+      // 1. Request reflection and mood analysis concurrently
+      const [geminiResponse, moodAnalysisData] = await Promise.all([
+        requestGeminiReflection({
+          prompt: content,
+          mode: selectedMode,
+          history: [],
+        }),
+        analyzeJournalMood(content, entryTitle).catch(() => null),
+      ]);
 
       setSubmitStep("Saving reflection to Cloud Firestore...");
 
@@ -183,11 +190,15 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
         },
       ];
 
-      // 3. Save entry to isolated Firestore path
+      // 3. Determine effective entry mood and save entry to isolated Firestore path
+      const detectedMoodKey = moodAnalysisData?.primaryMood || "neutral";
+      const autoMoodLabel = `${MOOD_METADATA[detectedMoodKey]?.emoji || "🌱"} ${MOOD_METADATA[detectedMoodKey]?.label || "Neutral"}`;
+      
       const newEntry = await createJournalEntry(userId, {
         title: entryTitle,
         initialContent: content,
-        mood: selectedMood,
+        mood: selectedMood || autoMoodLabel,
+        moodAnalysis: moodAnalysisData || undefined,
         tags: tags,
         turns: initialTurns,
         pinned: false,
@@ -237,7 +248,7 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
             </div>
             <div>
               <p className="text-sm font-medium text-[#DC3545]">
-                {error.startsWith("Something went wrong") ? error : `Something went wrong. ${error}`}
+                {error}
               </p>
             </div>
           </div>
@@ -403,26 +414,49 @@ export const JournalEditor: React.FC<JournalEditorProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-[#E9ECEF]">
             {/* Mood selector */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-[#495057] uppercase tracking-wider flex items-center gap-1">
-                <Smile className="w-3.5 h-3.5 text-[#6C757D]" />
-                <span>Current State / Mood</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-[#495057] uppercase tracking-wider flex items-center gap-1">
+                  <Smile className="w-3.5 h-3.5 text-[#6C757D]" />
+                  <span>Mood (Optional Override)</span>
+                </label>
+                <span className="text-[11px] text-[#6C757D]">
+                  {selectedMood ? "Manual selection active" : "Auto-detected by AI upon submit"}
+                </span>
+              </div>
               <div className="flex flex-wrap gap-1.5">
-                {MOODS.map((m) => (
-                  <button
-                    key={m.label}
-                    type="button"
-                    onClick={() => setSelectedMood(`${m.emoji} ${m.label}`)}
-                    className={`px-2.5 py-1 text-xs rounded-lg border transition-all flex items-center gap-1 ${
-                      selectedMood.includes(m.label)
-                        ? "bg-[#E7F3FF] border-[#4A90E2] text-[#4A90E2] font-semibold"
-                        : "bg-[#F8F9FA] border-[#E9ECEF] text-[#495057] hover:bg-[#F1F3F5]"
-                    }`}
-                  >
-                    <span>{m.emoji}</span>
-                    <span>{m.label}</span>
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  id="btn-mood-autodetect"
+                  onClick={() => setSelectedMood(null)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-all flex items-center gap-1.5 ${
+                    selectedMood === null
+                      ? "bg-emerald-50 border-emerald-300 text-emerald-700 font-medium"
+                      : "bg-[#F8F9FA] border-[#E9ECEF] text-[#495057] hover:bg-[#F1F3F5]"
+                  }`}
+                  title="Gemini analyzes and tags your emotional tone automatically from your reflection text"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Auto-Detect with AI</span>
+                </button>
+                {MANUAL_MOOD_OPTIONS.map((m) => {
+                  const isSelected = selectedMood === `${m.emoji} ${m.label}`;
+                  return (
+                    <button
+                      key={m.label}
+                      type="button"
+                      onClick={() => setSelectedMood(isSelected ? null : `${m.emoji} ${m.label}`)}
+                      className={`px-2.5 py-1 text-xs rounded-lg border transition-all flex items-center gap-1 ${
+                        isSelected
+                          ? "bg-[#E7F3FF] border-[#4A90E2] text-[#4A90E2] font-semibold"
+                          : "bg-[#F8F9FA] border-[#E9ECEF] text-[#495057] hover:bg-[#F1F3F5]"
+                      }`}
+                      title={isSelected ? "Click to revert to Auto-Detect" : `Select ${m.label}`}
+                    >
+                      <span>{m.emoji}</span>
+                      <span>{m.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

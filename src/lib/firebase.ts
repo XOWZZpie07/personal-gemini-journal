@@ -25,7 +25,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
-import { JournalEntry, ConversationTurn, UserProfile } from "../types";
+import { JournalEntry, ConversationTurn, UserProfile, PetPreferences, MoodAnalysisResult } from "../types";
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -91,7 +91,7 @@ export async function syncUserProfile(user: User): Promise<void> {
   if (!user || !user.uid) return;
   try {
     const userDocRef = doc(db, "users", user.uid);
-    const profileData: UserProfile = {
+    const profileData: Partial<UserProfile> = {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
@@ -101,6 +101,47 @@ export async function syncUserProfile(user: User): Promise<void> {
     await setDoc(userDocRef, profileData, { merge: true });
   } catch (err) {
     console.error("Failed to sync user profile to Firestore:", err);
+  }
+}
+
+// Get User Profile including Pet Preferences
+export async function getUserProfile(userId: string): Promise<UserProfile | null> {
+  if (!userId) return null;
+  try {
+    const userDocRef = doc(db, "users", userId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      return snap.data() as UserProfile;
+    }
+    return null;
+  } catch (err) {
+    console.error("Failed to get user profile:", err);
+    return null;
+  }
+}
+
+// Save User Pet Preferences (Isolated under /users/{userId})
+export async function savePetPreferences(userId: string, prefs: PetPreferences): Promise<void> {
+  if (!userId) throw new Error("Authentication required to save pet preferences.");
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    throw new Error("Something went wrong. Please check your internet connection and try again.");
+  }
+
+  try {
+    const userDocRef = doc(db, "users", userId);
+    await setDoc(
+      userDocRef,
+      {
+        petPreferences: {
+          ...prefs,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error("Failed to save pet preferences to Firestore:", err);
+    throw new Error("Something went wrong. Please try again.");
   }
 }
 
@@ -132,6 +173,7 @@ export function subscribeToUserEntries(
           title: data.title || "Untitled Reflection",
           initialContent: data.initialContent || "",
           mood: data.mood || "Balanced",
+          moodAnalysis: data.moodAnalysis || undefined,
           tags: data.tags || [],
           turns: Array.isArray(data.turns) ? data.turns : [],
           createdAt: data.createdAt || new Date().toISOString(),
@@ -197,6 +239,15 @@ export async function createJournalEntry(
     pinned: Boolean(entry.pinned),
   };
 
+  if (entry.moodAnalysis && entry.moodAnalysis.primaryMood) {
+    newEntry.moodAnalysis = {
+      primaryMood: entry.moodAnalysis.primaryMood,
+      confidence: typeof entry.moodAnalysis.confidence === "number" ? entry.moodAnalysis.confidence : 0.85,
+      explanation: entry.moodAnalysis.explanation || "",
+      detectedAt: entry.moodAnalysis.detectedAt || now,
+    };
+  }
+
   try {
     await withFirestoreTimeout(
       setDoc(newEntryRef, newEntry),
@@ -207,6 +258,35 @@ export async function createJournalEntry(
   } catch (err: any) {
     console.error("[Firestore createJournalEntry error]:", err);
     throw new Error("Something went wrong. Please try again.");
+  }
+}
+
+// Update an entry's AI mood analysis in Firestore
+export async function updateJournalEntryMoodAnalysis(
+  userId: string,
+  entryId: string,
+  moodAnalysis: MoodAnalysisResult
+): Promise<void> {
+  if (!userId || !entryId || !moodAnalysis || !moodAnalysis.primaryMood) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
+  try {
+    const entryRef = doc(db, "users", userId, "entries", entryId);
+    await withFirestoreTimeout(
+      updateDoc(entryRef, {
+        moodAnalysis: {
+          primaryMood: moodAnalysis.primaryMood,
+          confidence: typeof moodAnalysis.confidence === "number" ? moodAnalysis.confidence : 0.85,
+          explanation: moodAnalysis.explanation || "",
+          detectedAt: moodAnalysis.detectedAt || new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      }),
+      6000,
+      "Updating AI mood analysis in Firestore"
+    );
+  } catch (err: any) {
+    console.warn("[Firestore updateJournalEntryMoodAnalysis error]:", err);
   }
 }
 

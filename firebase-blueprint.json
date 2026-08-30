@@ -9,7 +9,18 @@
         "email": { "type": "string", "description": "User email address" },
         "displayName": { "type": "string", "description": "User display name" },
         "photoURL": { "type": "string", "description": "User avatar photo URL" },
-        "lastLoginAt": { "type": "string", "format": "date-time", "description": "Last sign-in ISO timestamp" }
+        "lastLoginAt": { "type": "string", "format": "date-time", "description": "Last sign-in ISO timestamp" },
+        "petPreferences": {
+          "type": "object",
+          "description": "Animated Journal Buddy settings and personalization",
+          "properties": {
+            "petType": { "type": "string", "enum": ["cat", "dog", "fox", "bunny", "dragon", "robot"] },
+            "petName": { "type": "string" },
+            "accessory": { "type": "string", "enum": ["none", "flower", "glasses", "sparkles", "scarf"] },
+            "colorTheme": { "type": "string", "enum": ["default", "warm", "cool", "pastel"] },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        }
       },
       "required": ["uid"]
     },
@@ -23,6 +34,16 @@
         "title": { "type": "string", "description": "Title of the journal reflection" },
         "initialContent": { "type": "string", "description": "Initial unfiltered thoughts written by user" },
         "mood": { "type": "string", "description": "Emotional state tag" },
+        "moodAnalysis": {
+          "type": "object",
+          "description": "Structured AI emotional tone analysis",
+          "properties": {
+            "primaryMood": { "type": "string" },
+            "confidence": { "type": "number" },
+            "explanation": { "type": "string" },
+            "detectedAt": { "type": "string", "format": "date-time" }
+          }
+        },
         "tags": { "type": "array", "description": "Categorization tags" },
         "turns": { "type": "array", "description": "Array of conversation turns between user and Gemini AI" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation ISO timestamp" },
