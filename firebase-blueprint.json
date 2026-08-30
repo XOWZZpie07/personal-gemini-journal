@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile metadata isolated per authenticated UID",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "photoURL": { "type": "string", "description": "User avatar photo URL" },
+        "lastLoginAt": { "type": "string", "format": "date-time", "description": "Last sign-in ISO timestamp" }
+      },
+      "required": ["uid"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "User journal reflection document with multi-turn AI synthesis history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique entry identifier" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "title": { "type": "string", "description": "Title of the journal reflection" },
+        "initialContent": { "type": "string", "description": "Initial unfiltered thoughts written by user" },
+        "mood": { "type": "string", "description": "Emotional state tag" },
+        "tags": { "type": "array", "description": "Categorization tags" },
+        "turns": { "type": "array", "description": "Array of conversation turns between user and Gemini AI" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation ISO timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update ISO timestamp" },
+        "pinned": { "type": "boolean", "description": "Pin status for quick access" }
+      },
+      "required": ["id", "userId", "initialContent", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document isolated to matching auth UID"
+    },
+    "/users/{userId}/entries/{entryId}": {
+      "schema": "JournalEntry",
+      "description": "Collection of journal reflections owned by the user"
+    }
+  }
+}

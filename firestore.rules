@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Isolated per-user storage root
+    // Only the authenticated user matching their own Firebase UID has read/write permissions
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Isolated journal entries subcollection
+      match /entries/{entryId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+
+        // Isolated multi-turn reflection turns subcollection if stored as subcollection
+        match /{document=**} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+
+      // Any nested user subcollection
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Explicitly deny access to any unauthenticated or cross-user root paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
